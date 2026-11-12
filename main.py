@@ -131,7 +131,7 @@ def forecast_matrix(snaps, vel_index):
         if total > 0:
             for u in cand:
                 prob[(k, u)] = (1.0 - RESID) * prob.get((k, u), 0.0) / total
-    return prob, cand, last_rank, vels
+    return prob, cand, last_rank, vels, created, last_time
 
 
 def main():
@@ -142,8 +142,8 @@ def main():
         raise SystemExit("empty history")
     places = int(task.get("places", 10))
 
-    p_end, cand, last_rank, v_end = forecast_matrix(snaps, 0)
-    p_reg, _, _, v_reg = forecast_matrix(snaps, 1)
+    p_end, cand, last_rank, v_end, created, last_time = forecast_matrix(snaps, 0)
+    p_reg, _, _, v_reg, _, _ = forecast_matrix(snaps, 1)
     keys = set(p_end) | set(p_reg)
     prob = {k: 0.5 * (p_end.get(k, 0.0) + p_reg.get(k, 0.0)) for k in keys}
     # re-normalise each place column to exactly 1 - RESID after averaging
@@ -158,12 +158,20 @@ def main():
         for (k, u), p in sorted(prob.items())
         if p > 0
     ]
-    # top10 by expected rank at h=36 under the averaged velocity
+    # top10 by expected rank at h=36 under the averaged velocity,
+    # excluding games that age out of the chart by then (their
+    # probabilities are already zero everywhere, so they must not
+    # occupy a top-10 slot either)
+    alive36 = [
+        u for u in cand
+        if created.get(u) is None
+        or created[u] + timedelta(days=AGE_DAYS) > last_time + timedelta(hours=36)
+    ]
     mu36 = {
         u: last_rank[u] + VEL_SHRINK * 0.5 * (v_end[u][0] + v_reg[u][1]) * 36
-        for u in cand
+        for u in alive36
     }
-    top10 = sorted(cand, key=lambda u: mu36[u])[:places]
+    top10 = sorted(alive36, key=lambda u: mu36[u])[:places]
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(os.path.join(OUTPUT_DIR, task.get("output", "forecast.json")),
               "w", encoding="utf-8") as f:
